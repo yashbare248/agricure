@@ -18,6 +18,7 @@ import { Route as ReportRouteImport } from './routes/report'
 import { Route as SchemesRouteImport } from './routes/schemes'
 import { Route as ShopsRouteImport } from './routes/shops'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -64,40 +65,48 @@ const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/callback',
+  path: '/callback',
+  getParentRoute: () => AuthRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/advisor': typeof AdvisorRoute
-  '/auth': typeof AuthRoute
+  '/auth': typeof AuthRouteWithChildren
   '/blogs': typeof BlogsRoute
   '/history': typeof HistoryRoute
   '/report': typeof ReportRoute
   '/schemes': typeof SchemesRoute
   '/shops': typeof ShopsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/auth/callback': typeof AuthCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/advisor': typeof AdvisorRoute
-  '/auth': typeof AuthRoute
+  '/auth': typeof AuthRouteWithChildren
   '/blogs': typeof BlogsRoute
   '/history': typeof HistoryRoute
   '/report': typeof ReportRoute
   '/schemes': typeof SchemesRoute
   '/shops': typeof ShopsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/auth/callback': typeof AuthCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/advisor': typeof AdvisorRoute
-  '/auth': typeof AuthRoute
+  '/auth': typeof AuthRouteWithChildren
   '/blogs': typeof BlogsRoute
   '/history': typeof HistoryRoute
   '/report': typeof ReportRoute
   '/schemes': typeof SchemesRoute
   '/shops': typeof ShopsRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/auth/callback': typeof AuthCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -111,6 +120,7 @@ export interface FileRouteTypes {
     | '/schemes'
     | '/shops'
     | '/sitemap.xml'
+    | '/auth/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -122,6 +132,7 @@ export interface FileRouteTypes {
     | '/schemes'
     | '/shops'
     | '/sitemap.xml'
+    | '/auth/callback'
   id:
     | '__root__'
     | '/'
@@ -133,12 +144,13 @@ export interface FileRouteTypes {
     | '/schemes'
     | '/shops'
     | '/sitemap.xml'
+    | '/auth/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdvisorRoute: typeof AdvisorRoute
-  AuthRoute: typeof AuthRoute
+  AuthRoute: typeof AuthRouteWithChildren
   BlogsRoute: typeof BlogsRoute
   HistoryRoute: typeof HistoryRoute
   ReportRoute: typeof ReportRoute
@@ -212,13 +224,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SitemapDotxmlRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof AuthRoute
+    }
   }
 }
+
+interface AuthRouteChildren {
+  AuthCallbackRoute: typeof AuthCallbackRoute
+}
+
+const AuthRouteChildren: AuthRouteChildren = {
+  AuthCallbackRoute: AuthCallbackRoute,
+}
+
+const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdvisorRoute: AdvisorRoute,
-  AuthRoute: AuthRoute,
+  AuthRoute: AuthRouteWithChildren,
   BlogsRoute: BlogsRoute,
   HistoryRoute: HistoryRoute,
   ReportRoute: ReportRoute,
@@ -229,3 +258,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
