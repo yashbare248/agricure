@@ -155,7 +155,7 @@ const l3List = (v: unknown) => {
  * Emulates the PlantVillage-trained classifier directly using Google Gemini API.
  * Uses the GOOGLE_API_KEY environment variable.
  */
-export async function classifyWithGoogle(image: string): Promise<RawPrediction | null> {
+export async function classifyWithGoogle(image: string): Promise<{ label: string; score: number; runnerUpScore?: number } | null> {
   const key = process.env["GOOGLE_API_KEY"];
   if (!key) return null;
 
