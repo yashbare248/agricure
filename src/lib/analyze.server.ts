@@ -83,7 +83,14 @@ export function aggregatePredictions(
  */
 export async function classifyWithLovableAI(image: string): Promise<RawPrediction | null> {
   const key = process.env["LOVABLE_API_KEY"];
-  if (!key) return null;
+  if (!key) {
+    const googleKey = process.env["GOOGLE_API_KEY"];
+    if (googleKey) {
+      const { classifyWithGoogle } = await import("./google-vision.server");
+      return classifyWithGoogle(image);
+    }
+    return null;
+  }
 
   try {
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {

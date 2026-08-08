@@ -150,3 +150,71 @@ const l3List = (v: unknown) => {
   const en = arr(o["en"]);
   return { en, hi: arr(o["hi"]).length ? arr(o["hi"]) : en, mr: arr(o["mr"]).length ? arr(o["mr"]) : en };
 };
+
+/**
+ * Emulates the PlantVillage-trained classifier directly using Google Gemini API.
+ * Uses the GOOGLE_API_KEY environment variable.
+ */
+export async function classifyWithGoogle(image: string): Promise<RawPrediction | null> {
+  const key = process.env["GOOGLE_API_KEY"];
+  if (!key) return null;
+
+  const { mime, data } = mimeAndData(image);
+  if (!data) return null;
+
+  const prompt =
+    "You are a plant pathologist emulating a PlantVillage-trained classifier. " +
+    "Identify the crop and leaf disease in the photo. " +
+    'Answer ONLY with strict JSON: {"label": "Crop___Disease", "confidence": 0-1}. ' +
+    "The photo may be a zoomed crop/patch of a larger image. Inspect closely for lesions, " +
+    "rot, mould, spots, holes or discolouration on ANY part of the visible leaf or fruit; " +
+    "report the disease if even a small area is affected, and only say healthy when the " +
+    "entire visible tissue is clean. " +
+    "The crop portion MUST be one of: Apple, Blueberry, Cherry, Corn, Grape, Orange, Peach, Pepper,_bell, Potato, Raspberry, Soybean, Squash, Strawberry, Tomato. " +
+    'If the leaf is any other crop (rice, cotton, wheat, sugarcane, etc.) or you cannot tell, return {"label": "Unknown___unknown", "confidence": 0}. ' +
+    "Use ___healthy as the disease portion when no disease is visible. Never guess a crop that is not in the list.";
+
+  try {
+    const res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: mime, data } },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+        },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    if (!res.ok) {
+      console.error(`Google classification failed [${res.status}]`);
+      return null;
+    }
+
+    const json = await res.json();
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return null;
+
+    const parsed = JSON.parse(text.trim()) as { label?: string; confidence?: number };
+    if (!parsed.label) return null;
+
+    return {
+      label: parsed.label,
+      score: typeof parsed.confidence === "number" ? parsed.confidence : 0.9,
+    };
+  } catch (err) {
+    console.error("Google classification error", err);
+    return null;
+  }
+}
+
