@@ -11,7 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { LanguageProvider } from "../lib/i18n";
+import { LanguageProvider } from "@/lib/i18n";
 import { Toaster } from "../components/ui/sonner";
 
 function NotFoundComponent() {
@@ -93,7 +93,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@AgriCure" },
+      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {

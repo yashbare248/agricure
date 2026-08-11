@@ -179,6 +179,14 @@ type Ctx = {
 
 const LangContext = createContext<Ctx | null>(null);
 
+const FALLBACK_CTX: Ctx = {
+  lang: "en",
+  setLang: () => {},
+  demo: true,
+  setDemo: () => {},
+  t: (k) => DICT[k].en,
+};
+
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>("en");
   const [demo, setDemoState] = useState(true);
@@ -212,6 +220,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
 export function useI18n() {
   const ctx = useContext(LangContext);
-  if (!ctx) throw new Error("useI18n must be used inside LanguageProvider");
-  return ctx;
+  // Fall back to English defaults instead of crashing the tree if a consumer
+  // renders outside the provider (e.g. during a dev HMR remount).
+  return ctx ?? FALLBACK_CTX;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Activity,
   BadgeCheck,
@@ -271,9 +272,11 @@ export function ResultsPanel({
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {result.openVocabulary
                   ? "Google Gemini vision + public advisories"
-                  : result.source === "huggingface"
-                    ? "Hugging Face vision model"
-                    : "AgriCure mapping engine"}
+                  : result.source === "on-device"
+                    ? "On-device CNN (offline, no cloud call)"
+                    : result.source === "huggingface"
+                      ? "Hugging Face vision model"
+                      : "AgriCure mapping engine"}
               </p>
             </div>
           </div>
@@ -303,13 +306,19 @@ export function ResultsPanel({
 
             {showQr && qrValue && (
               <div className="mt-3 flex items-center gap-3 rounded-2xl border bg-card p-3">
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(qrValue)}`}
-                  alt="QR diagnostic summary"
-                  className="size-28 rounded-lg"
-                  width={112}
-                  height={112}
-                />
+                <div
+                  className="shrink-0 rounded-lg bg-background p-2"
+                  role="img"
+                  aria-label="QR diagnostic summary"
+                >
+                  <QRCodeSVG
+                    value={qrValue}
+                    size={128}
+                    level="M"
+                    marginSize={1}
+                    className="size-28 sm:size-32"
+                  />
+                </div>
                 <p className="text-xs text-muted-foreground">{t("qrHint")}</p>
               </div>
             )}

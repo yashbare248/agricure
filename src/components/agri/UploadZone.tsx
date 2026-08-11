@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Camera, ImageUp, Loader2, Sprout, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { TREATMENTS } from "@/lib/treatments";
 import { CROP_CATALOG } from "@/lib/plantvillage";
+import { preloadLeafCnn } from "@/lib/leaf-cnn";
 
 type Props = {
   preview: string | null;
@@ -42,6 +43,12 @@ export function UploadZone({
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const camRef = useRef<HTMLInputElement>(null);
+
+  // Warm the on-device model once a real photo is staged, so the first-pass
+  // classification is instant when the farmer taps Analyze.
+  useEffect(() => {
+    if (preview && !activeSample) preloadLeafCnn();
+  }, [preview, activeSample]);
 
   // Sample leaves are pre-cached demos and carry their own crop, so they don't
   // require the crop dropdown; real uploads still do.

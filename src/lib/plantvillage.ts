@@ -34,6 +34,48 @@ export const supportedCropList = (lang: Lang) =>
     .map((c) => c.label[lang])
     .join(", ");
 
+/** Exact disease classes available for each crop in the 38-class PlantVillage model. */
+const DISEASE_CLASSES: Record<string, readonly string[]> = {
+  apple: ["applescab", "blackrot", "cedarapplerust", "healthy"],
+  blueberry: ["healthy"],
+  cherry: ["powderymildew", "healthy"],
+  corn: ["cercosporaleafspotgrayleafspot", "commonrust", "northernleafblight", "healthy"],
+  grape: ["blackrot", "escablackmeasles", "leafblightisariopsisleafspot", "healthy"],
+  orange: ["haunglongbingcitrusgreening"],
+  peach: ["bacterialspot", "healthy"],
+  pepper: ["bacterialspot", "healthy"],
+  potato: ["earlyblight", "lateblight", "healthy"],
+  raspberry: ["healthy"],
+  soybean: ["healthy"],
+  squash: ["powderymildew"],
+  strawberry: ["leafscorch", "healthy"],
+  tomato: [
+    "bacterialspot",
+    "earlyblight",
+    "lateblight",
+    "leafmold",
+    "septorialeafspot",
+    "spidermitestwospottedspidermite",
+    "targetspot",
+    "tomatoyellowleafcurlvirus",
+    "tomatomosaicvirus",
+    "healthy",
+  ],
+};
+
+const diseaseTokenSlug = (token: string) => token.toLowerCase().replace(/[^a-z]/g, "");
+
+export function isValidPlantVillageLabel(label: string, expectedCropKey?: string): boolean {
+  const parsed = parseLabel(label);
+  if (!parsed.cropKey || (expectedCropKey && parsed.cropKey !== expectedCropKey)) return false;
+  return (DISEASE_CLASSES[parsed.cropKey] ?? []).includes(diseaseTokenSlug(parsed.diseaseToken));
+}
+
+/** These crops have no diseased class in PlantVillage and need open-vocabulary diagnosis. */
+export function hasPlantVillageDiseaseCoverage(cropKey: string): boolean {
+  return (DISEASE_CLASSES[cropKey] ?? []).some((disease) => disease !== "healthy");
+}
+
 /** Normalises the crop portion of a "Crop___Disease" label to a catalog key. */
 function cropKeyFromToken(token: string): string | null {
   const t = token.toLowerCase().replace(/[^a-z]/g, "");
@@ -85,7 +127,7 @@ const DISEASES: DiseaseDef[] = [
   { slug: "tomatomosaicvirus", severity: 52, label: { en: "Mosaic Virus", hi: "मोज़ेक विषाणु", mr: "मोझॅक विषाणू" } },
 ];
 
-const slugify = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+const slugify = diseaseTokenSlug;
 
 function diseaseFromToken(token: string): DiseaseDef {
   const s = slugify(token);
@@ -204,18 +246,23 @@ export function treatmentFromLabel(
   const specificKey = `${parsed.cropKey}_${disease.slug}`;
   const known =
     specific(specificKey) ??
-    (parsed.healthy ? specific("healthy_leaf") : undefined) ??
     (parsed.cropKey === "apple" && disease.slug === "applescab" ? specific("apple_scab") : undefined) ??
     (parsed.cropKey === "potato" && disease.slug === "lateblight" ? specific("potato_late_blight") : undefined) ??
     (parsed.cropKey === "tomato" && disease.slug === "earlyblight" ? specific("tomato_early_blight") : undefined);
   if (known) return known;
 
   const cropLabel: L = crop?.label ?? { en: parsed.cropToken, hi: parsed.cropToken, mr: parsed.cropToken };
-  const name: L = {
-    en: `${cropLabel.en} ${disease.label.en}`,
-    hi: `${cropLabel.hi} ${disease.label.hi}`,
-    mr: `${cropLabel.mr} ${disease.label.mr}`,
-  };
+  const name: L = parsed.healthy
+    ? {
+        en: `Healthy ${cropLabel.en} Leaf`,
+        hi: `स्वस्थ ${cropLabel.hi} पत्ती`,
+        mr: `निरोगी ${cropLabel.mr} पान`,
+      }
+    : {
+        en: `${cropLabel.en} ${disease.label.en}`,
+        hi: `${cropLabel.hi} ${disease.label.hi}`,
+        mr: `${cropLabel.mr} ${disease.label.mr}`,
+      };
   const advice = parsed.healthy ? HEALTHY_ADVICE : GENERIC;
   return {
     key: specificKey,

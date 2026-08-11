@@ -14,31 +14,37 @@ async function gw(path: string, params: Record<string, string>): Promise<unknown
   const lovableKey = process.env["LOVABLE_API_KEY"];
   const mapsKey = process.env["GOOGLE_MAPS_API_KEY"];
 
-  let url: string;
-  const headers: Record<string, string> = {};
-
+  // Try the project's own server key first, then the managed connector gateway.
+  // A referrer-restricted (browser) key 403s on server calls, so we must not
+  // stop at the first attempt.
+  const attempts: { url: string; headers: Record<string, string> }[] = [];
   if (ownKey) {
     const qs = new URLSearchParams({ ...params, key: ownKey }).toString();
-    url = `${GOOGLE_WEATHER}${path.replace(/^\/weather/, "")}?${qs}`;
-  } else if (lovableKey && mapsKey) {
-    url = `${GATEWAY}${path}?${new URLSearchParams(params).toString()}`;
-    headers["Authorization"] = `Bearer ${lovableKey}`;
-    headers["X-Connection-Api-Key"] = mapsKey;
-  } else {
-    return null;
+    attempts.push({ url: `${GOOGLE_WEATHER}${path.replace(/^\/weather/, "")}?${qs}`, headers: {} });
+  }
+  if (lovableKey && mapsKey) {
+    attempts.push({
+      url: `${GATEWAY}${path}?${new URLSearchParams(params).toString()}`,
+      headers: {
+        Authorization: `Bearer ${lovableKey}`,
+        "X-Connection-Api-Key": mapsKey,
+      },
+    });
   }
 
-  try {
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      console.error(`Google Weather ${path} failed [${res.status}]: ${await res.text()}`);
-      return null;
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, { headers: attempt.headers });
+      if (!res.ok) {
+        console.error(`Google Weather ${path} failed [${res.status}]: ${await res.text()}`);
+        continue;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error(`Google Weather ${path} error`, err);
     }
-    return await res.json();
-  } catch (err) {
-    console.error(`Google Weather ${path} error`, err);
-    return null;
   }
+  return null;
 }
 
 const loc = (lat: number, lon: number) => ({

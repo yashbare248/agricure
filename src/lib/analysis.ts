@@ -1,7 +1,8 @@
 import { classifyLeaf, identifyAnyLeaf } from "./analyze.functions";
 import { mapLabelToTreatment, byKey, type Treatment } from "./treatments";
-import { cropByKey, parseLabel } from "./plantvillage";
+import { cropByKey, hasPlantVillageDiseaseCoverage, parseLabel } from "./plantvillage";
 import { buildImageTiles } from "./image-tiles";
+import { classifyOnDevice, CNN_GATE_THRESHOLD } from "./leaf-cnn";
 import { supabase } from "@/integrations/supabase/client";
 
 /** Why a result is shown in the amber warning state instead of a confident diagnosis. */
@@ -12,7 +13,7 @@ export type AnalysisResult = {
   confidence: number;
   severity: number;
   healthScore: number;
-  source: "huggingface" | "demo" | "fallback";
+  source: "huggingface" | "demo" | "fallback" | "on-device";
   status: ResultStatus;
   /** Crop the user picked in the dropdown, if any. */
   selectedCropKey?: string;
@@ -113,15 +114,31 @@ export class AuthRequiredError extends Error {
   }
 }
 
+/** Thrown when the live AI engine is unreachable (credits, rate limit, network). */
+export class AnalysisUnavailableError extends Error {
+  constructor() {
+    super("analysis_unavailable");
+    this.name = "AnalysisUnavailableError";
+  }
+}
+
 /** Turns a boundary-free Google AI diagnosis into a normal result card. */
 async function openDiagnosis(
   imageBase64: string,
   cropHint?: string,
+  expectedCropKey?: string,
 ): Promise<AnalysisResult | null> {
   try {
-    const { diagnosis } = await identifyAnyLeaf({ data: { imageBase64, ...(cropHint ? { cropHint } : {}) } });
+    const { diagnosis } = await identifyAnyLeaf({
+      data: { imageBase64, ...(cropHint ? { cropHint } : {}) },
+    });
     if (!diagnosis) return null;
-    const slug = diagnosis.disease.en.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const diagnosedCropKey = parseLabel(`${diagnosis.crop.en}___healthy`).cropKey;
+    if (expectedCropKey && diagnosedCropKey !== expectedCropKey) return null;
+    const slug = diagnosis.disease.en
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "");
     const treatment: Treatment = {
       key: `open_${slug || "diagnosis"}`,
       emoji: diagnosis.healthy ? "🌿" : "🔬",
@@ -184,18 +201,45 @@ export async function analyzeImage(
     throw new AuthRequiredError();
   }
 
-  // Crops the PlantVillage model has zero classes for (rice, cotton, wheat,
-  // sugarcane…) go straight to the boundary-free Google AI pipeline.
-  if (selected && !selected.supported) {
-    const open = await openDiagnosis(imageBase64, selected.label.en);
+  // Crops outside PlantVillage, plus crops represented only by a healthy class,
+  // go directly to open diagnosis. This prevents a diseased soybean/raspberry/
+  // blueberry leaf from being forced into an unrelated crop's disease class.
+  if (selected && (!selected.supported || !hasPlantVillageDiseaseCoverage(selected.key))) {
+    const open = await openDiagnosis(imageBase64, selected.label.en, selected.key);
     if (open) return { ...open, selectedCropKey: selected.key };
     return unsupportedResult(selected.key);
   }
 
   try {
     const tiles = await buildImageTiles(imageBase64);
+
+    // First pass: on-device CNN. When it is confident AND agrees with the crop
+    // the farmer selected, serve the diagnosis locally and skip the cloud
+    // vision call entirely (free, instant, works offline).
+    const local = await classifyOnDevice(tiles);
+    if (local && local.score >= CNN_GATE_THRESHOLD) {
+      const parsed = parseLabel(local.label);
+      const detected = cropByKey(parsed.cropKey);
+      const cropAgrees = detected && (!selected || detected.key === selected.key);
+      const gap = (local.score - local.runnerUpScore) * 100;
+      if (cropAgrees && gap >= AMBIGUITY_GAP) {
+        const built = buildResult(mapLabelToTreatment(local.label), "on-device", local.score);
+        return {
+          ...built,
+          detectedCropKey: detected.key,
+          ...(selected ? { selectedCropKey: selected.key } : {}),
+        };
+      }
+    }
+
     const res = await Promise.race([
-      classifyLeaf({ data: { imageBase64, tiles } }),
+      classifyLeaf({
+        data: {
+          imageBase64,
+          tiles,
+          ...(selected ? { cropKey: selected.key } : {}),
+        },
+      }),
       new Promise<null>((r) => setTimeout(() => r(null), LIVE_TIMEOUT_MS)),
     ]);
     if (res?.label) {
@@ -205,7 +249,7 @@ export async function analyzeImage(
       // (a) crop outside the model's supported list → open-vocabulary fallback
       // so any crop still gets a real diagnosis.
       if (!detected || !detected.supported) {
-        const open = await openDiagnosis(imageBase64, selected?.label.en);
+        const open = await openDiagnosis(imageBase64, selected?.label.en, selected?.key);
         if (open) {
           return {
             ...open,
@@ -217,10 +261,22 @@ export async function analyzeImage(
       }
       // Model detected a different crop than the farmer selected.
       if (selected && detected.key !== selected.key) {
+        const open = await openDiagnosis(imageBase64, selected.label.en, selected.key);
+        if (open) {
+          return {
+            ...open,
+            selectedCropKey: selected.key,
+            detectedCropKey: detected.key,
+          };
+        }
         return unsupportedResult(selected.key, detected.key, "mismatch");
       }
 
-      const built = buildResult(mapLabelToTreatment(res.label), "huggingface", res.score ?? undefined);
+      const built = buildResult(
+        mapLabelToTreatment(res.label),
+        "huggingface",
+        res.score ?? undefined,
+      );
       const gap =
         typeof res.score === "number" && typeof res.runnerUpScore === "number"
           ? (res.score - res.runnerUpScore) * 100
@@ -239,14 +295,14 @@ export async function analyzeImage(
     /* network failure — fall through to the cached mapping engine */
   }
 
-  // Closed classifier gave nothing usable — try the open Google pipeline before
-  // falling back to a cached sample.
-  const open = await openDiagnosis(imageBase64, selected?.label.en);
+  // Closed classifier gave nothing usable — try the open AI pipeline.
+  const open = await openDiagnosis(imageBase64, selected?.label.en, selected?.key);
   if (open) return { ...open, ...(selected ? { selectedCropKey: selected.key } : {}) };
 
+  // Never substitute a cached sample for a real photo — that is what made the
+  // app show e.g. "Tomato Early Blight" for a soybean leaf.
   opts.onFallback?.();
-  const cached = demoResult(opts.forcedKey);
-  return { ...cached, source: "fallback" };
+  throw new AnalysisUnavailableError();
 }
 
 export function fileToBase64(file: File): Promise<string> {

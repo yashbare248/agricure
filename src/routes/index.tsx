@@ -16,7 +16,7 @@ import { HowItWorks } from "@/components/agri/HowItWorks";
 import {
   analyzeImage,
   AuthRequiredError,
-  demoResult,
+  AnalysisUnavailableError,
   fileToBase64,
   type AnalysisResult,
 } from "@/lib/analysis";
@@ -68,15 +68,10 @@ const TXT = {
     hi: "मुख्य निदान के साथ अतिरिक्त सुविधाएँ",
     mr: "मुख्य निदानासोबतची अतिरिक्त साधने",
   },
-  fallbackToast: {
-    en: "Live model unreachable, showing cached example",
-    hi: "लाइव मॉडल उपलब्ध नहीं, कैश्ड उदाहरण दिखा रहे हैं",
-    mr: "थेट मॉडेल उपलब्ध नाही, कॅश्ड उदाहरण दाखवत आहोत",
-  },
   analysisFailed: {
-    en: "Could not complete the analysis — showing a cached example instead.",
-    hi: "जाँच पूरी नहीं हो सकी — कैश्ड उदाहरण दिखाया जा रहा है।",
-    mr: "तपासणी पूर्ण झाली नाही — कॅश्ड उदाहरण दाखवत आहोत.",
+    en: "Could not complete the live analysis. No diagnosis was shown—please try again.",
+    hi: "लाइव जाँच पूरी नहीं हो सकी। कोई निदान नहीं दिखाया गया—कृपया फिर प्रयास करें।",
+    mr: "थेट तपासणी पूर्ण झाली नाही. कोणतेही निदान दाखवले नाही—कृपया पुन्हा प्रयत्न करा.",
   },
 };
 
@@ -189,7 +184,7 @@ function Home() {
         demo: !file,
         ...(activeCrop ? { cropKey: activeCrop } : {}),
         ...(sample ? { forcedKey: sample } : {}),
-        onFallback: () => toast.warning(TXT.fallbackToast[lang]),
+        onFallback: () => {},
         onAuthRequired: () => {},
       });
       setResult(res);
@@ -211,7 +206,11 @@ function Home() {
         toast.info(t("loginToSave"));
       }
     } catch (err) {
-      if (err instanceof AuthRequiredError) {
+      if (err instanceof AnalysisUnavailableError) {
+        toast.error(
+          "The AI diagnosis engine is unavailable right now, so no result is shown. Please try again shortly.",
+        );
+      } else if (err instanceof AuthRequiredError) {
         toast.error("Sign in to run live AI diagnosis on your own photo.", {
           action: { label: "Sign in", onClick: () => navigate({ to: "/auth" }) },
         });
@@ -295,7 +294,7 @@ function Home() {
                 setCropKey(k);
                 void analyze(k);
               }}
-              qrValue={buildReportUrl({ d: result.treatment.key, h: result.healthScore, s: result.severity, c: result.confidence, t: new Date().toISOString() })}
+              qrValue={buildReportUrl({ d: result.treatment.key, h: result.healthScore, s: result.severity, c: result.confidence, t: new Date().toISOString(), treatment: result.treatment })}
             />
           ) : (
             <div className="grid min-h-[280px] place-items-center rounded-3xl border-2 border-dashed p-8 text-center">

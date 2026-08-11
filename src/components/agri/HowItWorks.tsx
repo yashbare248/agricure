@@ -35,15 +35,15 @@ const FAQ = [
   {
     en: [
       "How long does a scan take?",
-      "Usually a few seconds. If the live model does not answer within 5 seconds we fall back to a cached example and tell you with a small toast, so you never wait on a spinner.",
+      "Usually a few seconds. If live analysis is unavailable, no sample diagnosis is substituted; we ask you to try again so an unrelated disease is never shown for your photo.",
     ],
     hi: [
       "एक स्कैन में कितना समय लगता है?",
-      "आमतौर पर कुछ सेकंड। यदि लाइव मॉडल 5 सेकंड में जवाब न दे, तो हम कैश्ड उदाहरण दिखाकर सूचना देते हैं — आपको स्पिनर पर इंतज़ार नहीं करना पड़ता।",
+      "आमतौर पर कुछ सेकंड। लाइव जाँच उपलब्ध न होने पर कोई नमूना निदान नहीं दिखाया जाता; गलत रोग से बचने के लिए दोबारा प्रयास करने को कहा जाता है।",
     ],
     mr: [
       "एका स्कॅनला किती वेळ लागतो?",
-      "साधारण काही सेकंद. थेट मॉडेलने ५ सेकंदात उत्तर न दिल्यास आम्ही कॅश्ड उदाहरण दाखवतो व सूचना देतो — तुम्हाला वाट पाहावी लागत नाही.",
+      "साधारण काही सेकंद. थेट तपासणी उपलब्ध नसल्यास नमुना निदान दाखवले जात नाही; चुकीचा रोग टाळण्यासाठी पुन्हा प्रयत्न करण्यास सांगितले जाते.",
     ],
   },
   {

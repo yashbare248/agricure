@@ -1,6 +1,33 @@
+import { isValidPlantVillageLabel } from "./plantvillage";
+
 const HF_MODEL = "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification";
 
 export type RawPrediction = { label: string; score: number; runnerUpScore?: number };
+
+const CROP_TOKENS: Record<string, string[]> = {
+  apple: ["apple"],
+  blueberry: ["blueberry"],
+  cherry: ["cherry"],
+  corn: ["corn", "maize"],
+  grape: ["grape"],
+  orange: ["orange", "citrus"],
+  peach: ["peach"],
+  pepper: ["pepper", "bell"],
+  potato: ["potato"],
+  raspberry: ["raspberry"],
+  soybean: ["soybean", "soy"],
+  squash: ["squash"],
+  strawberry: ["strawberry"],
+  tomato: ["tomato"],
+};
+
+function predictionMatchesCrop(label: string, cropKey?: string) {
+  if (!cropKey) return true;
+  const cropToken = (label.split("___")[0] ?? "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  return (CROP_TOKENS[cropKey] ?? [cropKey]).some((token) => cropToken.startsWith(token));
+}
 
 /** The 14 crop species covered by the PlantVillage-trained model. */
 const SUPPORTED_CROPS = [
@@ -36,8 +63,11 @@ const isHealthy = (label: string) => /healthy|unknown/i.test(label);
  */
 export function aggregatePredictions(
   results: (RawPrediction | null)[],
+  cropKey?: string,
 ): RawPrediction | null {
-  const preds = results.filter((r): r is RawPrediction => Boolean(r?.label));
+  const preds = results.filter(
+    (r): r is RawPrediction => Boolean(r?.label) && predictionMatchesCrop(r?.label ?? "", cropKey),
+  );
   if (preds.length === 0) return null;
 
   const diseased = preds
@@ -56,14 +86,32 @@ export function aggregatePredictions(
     entry.best = Math.max(entry.best, p.score);
     byLabel.set(p.label, entry);
   }
+
+  // With several views, one isolated disease answer is not enough to overrule
+  // a healthy consensus. This blocks a noisy background/edge tile from turning
+  // a clean leaf into a confident disease diagnosis.
+  const diseaseVotes = new Map<string, number>();
+  for (const prediction of diseased) {
+    diseaseVotes.set(prediction.label, (diseaseVotes.get(prediction.label) ?? 0) + 1);
+  }
+  const strongestDiseaseVotes = Math.max(...diseaseVotes.values());
+  if (preds.length >= 3 && strongestDiseaseVotes < 2 && healthy.length >= 2) {
+    return healthy[0] ?? null;
+  }
+
   const weight = (label: string) => {
-    const e = byLabel.get(label)!;
+    const e = byLabel.get(label);
+    if (!e) return 0;
     return e.best * (e.votes / preds.length);
   };
 
-  const top = [...diseased].sort((a, b) => weight(b.label) - weight(a.label))[0]!;
-  const agreeing = byLabel.get(top.label)!.votes;
-  const score = Math.min(0.99, top.score + (agreeing - 1) * 0.05);
+  const top = [...diseased].sort((a, b) => weight(b.label) - weight(a.label))[0];
+  if (!top) return healthy[0] ?? null;
+  const agreeing = byLabel.get(top.label)?.votes ?? 1;
+  // Confidence reflects agreement instead of increasing from one high-scoring
+  // tile. A low-consensus answer will therefore enter the uncertain UI state.
+  const agreementRatio = agreeing / preds.length;
+  const score = Math.min(0.99, top.score * (0.65 + 0.35 * agreementRatio));
   // Runner-up is compared on the same vote-weighted scale, so one dissenting
   // patch no longer makes a well-supported diagnosis look ambiguous.
   const others = [...byLabel.keys()].filter((l) => l !== top.label);
@@ -81,7 +129,10 @@ export function aggregatePredictions(
  * Vision classification through the Lovable AI gateway. Used as the primary
  * engine so real user photos get a real diagnosis (no Hugging Face token needed).
  */
-export async function classifyWithLovableAI(image: string): Promise<RawPrediction | null> {
+export async function classifyWithLovableAI(
+  image: string,
+  cropKey?: string,
+): Promise<RawPrediction | null> {
   const key = process.env["LOVABLE_API_KEY"];
   if (!key) {
     const googleKey = process.env["GOOGLE_API_KEY"];
@@ -110,6 +161,9 @@ export async function classifyWithLovableAI(image: string): Promise<RawPredictio
               "report the disease if even a small area is affected, and only say healthy when the " +
               "entire visible tissue is clean. " +
               `The crop portion MUST be one of: ${SUPPORTED_CROPS.join(", ")}. ` +
+              (cropKey
+                ? `The farmer selected ${cropKey}. Treat that as a hard crop constraint: return a ${cropKey} label only. If the image is clearly not ${cropKey}, return Unknown___unknown instead of guessing another crop. `
+                : "") +
               'If the leaf is any other crop (rice, cotton, wheat, sugarcane, etc.) or you cannot tell, return {"label": "Unknown___unknown", "confidence": 0}. ' +
               "Use ___healthy as the disease portion when no disease is visible. Never guess a crop that is not in the list.",
           },
@@ -134,7 +188,7 @@ export async function classifyWithLovableAI(image: string): Promise<RawPredictio
       label?: string;
       confidence?: number;
     };
-    if (!parsed.label) return null;
+    if (!parsed.label || !isValidPlantVillageLabel(parsed.label, cropKey)) return null;
     return {
       label: parsed.label,
       score: typeof parsed.confidence === "number" ? parsed.confidence : 0.9,
@@ -142,6 +196,23 @@ export async function classifyWithLovableAI(image: string): Promise<RawPredictio
   } catch {
     return null;
   }
+}
+
+/**
+ * Keeps a selected crop authoritative. A cross-crop closed-model prediction is
+ * discarded and retried with crop-constrained vision rather than displayed.
+ */
+export async function classifyCropAware(
+  image: string,
+  cropKey?: string,
+): Promise<RawPrediction | null> {
+  if (cropKey) {
+    const constrained = await classifyWithLovableAI(image, cropKey);
+    if (constrained) return constrained;
+  }
+  const closed = await classifyWithHuggingFace(image);
+  if (closed && predictionMatchesCrop(closed.label, cropKey)) return closed;
+  return cropKey ? null : classifyWithLovableAI(image);
 }
 
 /**
@@ -220,13 +291,14 @@ export async function identifyOpenVocabulary(
   image: string,
   cropHint?: string,
 ): Promise<OpenDiagnosis | null> {
-  // 1) Google first — Gemini API on the project's own GOOGLE_API_KEY, grounded
-  //    with live Google Search results (same key that powers weather / AQI).
-  const { identifyWithGoogle } = await import("./google-vision.server");
-  const viaGoogle = await identifyWithGoogle(image, cropHint);
-  if (viaGoogle) return viaGoogle;
+  const googleKey = process.env["GOOGLE_API_KEY"];
+  if (googleKey) {
+    const { identifyWithGoogle } = await import("./google-vision.server");
+    const viaGoogle = await identifyWithGoogle(image, cropHint);
+    if (viaGoogle) return viaGoogle;
+  }
 
-  // 2) Fallback — Lovable AI gateway.
+  // Diagnosis runs through the Lovable AI gateway.
   const key = process.env["LOVABLE_API_KEY"];
   if (!key) return null;
 
@@ -245,7 +317,10 @@ export async function identifyOpenVocabulary(
               "disease/pest/deficiency in the photo. There is NO fixed list of crops or diseases — " +
               "name whatever you actually see (rice blast, cotton leaf curl, sugarcane red rot, " +
               "banana sigatoka, chilli anthracnose, nutrient deficiency, etc.). " +
-              "Give doses that match Indian label recommendations. " +
+               "Give doses that match Indian label recommendations. " +
+               (cropHint
+                 ? `The farmer has identified the crop as ${cropHint}. Keep ${cropHint} as the crop; diagnose only the condition visible on that crop, and do not substitute a visually similar crop. `
+                 : "") +
               "Reply ONLY with strict JSON: {" +
               '"crop":{"en":"","hi":"","mr":""},' +
               '"disease":{"en":"","hi":"","mr":""},' +
@@ -263,8 +338,8 @@ export async function identifyOpenVocabulary(
             content: [
               {
                 type: "text",
-                text: cropHint
-                  ? `The farmer says this is ${cropHint}. Verify and diagnose.`
+                 text: cropHint
+                   ? `This is ${cropHint}. Diagnose its visible condition without changing the crop.`
                   : "Diagnose this leaf.",
               },
               { type: "image_url", image_url: { url: toDataUrl(image) } },

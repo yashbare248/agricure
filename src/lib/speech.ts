@@ -1,4 +1,4 @@
-import { SPEECH_LOCALE } from "./i18n";
+import { SPEECH_LOCALE } from "@/lib/i18n";
 import type { Lang } from "./treatments";
 
 /* ---------- voice loading ---------- */
@@ -63,6 +63,54 @@ const DEVANAGARI_DIGITS: Record<string, string> = {
   "5": "पाच", "6": "सहा", "7": "सात", "8": "आठ", "9": "नऊ",
 };
 
+const MR_ONES = [
+  "शून्य", "एक", "दोन", "तीन", "चार", "पाच", "सहा", "सात", "आठ", "नऊ",
+  "दहा", "अकरा", "बारा", "तेरा", "चौदा", "पंधरा", "सोळा", "सतरा", "अठरा", "एकोणीस",
+];
+const MR_TENS: Record<number, string> = {
+  2: "वीस", 3: "तीस", 4: "चाळीस", 5: "पन्नास",
+  6: "साठ", 7: "सत्तर", 8: "ऐंशी", 9: "नव्वद",
+};
+
+/** Small-integer to Marathi words. Falls back to digit-by-digit above 9999. */
+function mrNumber(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return String(n);
+  if (n < 20) return MR_ONES[n]!;
+  if (n < 100) {
+    const t = Math.floor(n / 10);
+    const r = n % 10;
+    return r === 0 ? MR_TENS[t]! : `${MR_ONES[r]!} आणि ${MR_TENS[t]!}`;
+  }
+  if (n < 1000) {
+    const h = Math.floor(n / 100);
+    const r = n % 100;
+    const head = h === 1 ? "शंभर" : `${MR_ONES[h]!}शे`;
+    return r === 0 ? head : `${head} ${mrNumber(r)}`;
+  }
+  if (n < 100000) {
+    const th = Math.floor(n / 1000);
+    const r = n % 1000;
+    const head = th === 1 ? "एक हजार" : `${mrNumber(th)} हजार`;
+    return r === 0 ? head : `${head} ${mrNumber(r)}`;
+  }
+  return String(n)
+    .split("")
+    .map((d) => DEVANAGARI_DIGITS[d] ?? d)
+    .join(" ");
+}
+
+/** "12.5" -> "बारा पूर्णांक पाच"; plain integers use full number words. */
+function mrNumeral(raw: string): string {
+  const [intPart, decPart] = raw.split(".");
+  const whole = mrNumber(Number(intPart));
+  if (decPart === undefined) return whole;
+  const frac = decPart
+    .split("")
+    .map((d) => DEVANAGARI_DIGITS[d] ?? d)
+    .join(" ");
+  return `${whole} पूर्णांक ${frac}`;
+}
+
 /**
  * Marathi TTS (usually rendered by a Hindi voice) mangles Latin symbols and
  * abbreviations. Rewrite them into Devanagari words so the narration flows.
@@ -70,6 +118,13 @@ const DEVANAGARI_DIGITS: Record<string, string> = {
 function shapeMarathi(text: string) {
   return text
     .replace(/\bKVK\b/g, "कृषी विज्ञान केंद्र")
+    .replace(/\bICAR\b/g, "आय सी ए आर")
+    .replace(/\bNPK\b/g, "एन पी के")
+    .replace(/\bpH\b/g, "सामू")
+    .replace(/\bAQI\b/g, "हवा गुणवत्ता निर्देशांक")
+    .replace(/\bGPS\b/g, "जी पी एस")
+    .replace(/\bPM\s*2\.5\b/gi, "पी एम अडीच")
+    .replace(/\bPM\s*10\b/gi, "पी एम दहा")
     .replace(/(\d)\s*%/g, "$1 टक्के")
     .replace(/%/g, " टक्के ")
     .replace(/(\d)\s*°\s*C/gi, "$1 अंश सेल्सिअस")
@@ -77,12 +132,22 @@ function shapeMarathi(text: string) {
     .replace(/(\d)\s*g\/?L?\b/gi, "$1 ग्रॅम प्रति लिटर")
     .replace(/(\d)\s*kg\b/gi, "$1 किलो")
     .replace(/(\d)\s*(l|ltr|litre|liter)\b/gi, "$1 लिटर")
+    .replace(/(\d)\s*(ha|hectare)\b/gi, "$1 हेक्टर")
+    .replace(/(\d)\s*acre[s]?\b/gi, "$1 एकर")
+    .replace(/(\d)\s*(hr|hrs|hour[s]?)\b/gi, "$1 तास")
+    .replace(/(\d)\s*(day[s]?)\b/gi, "$1 दिवस")
     .replace(/\bkm\/?h\b/gi, "किलोमीटर प्रति तास")
     .replace(/\bkm\b/gi, "किलोमीटर")
     .replace(/₹\s*(\d)/g, "$1 रुपये")
     .replace(/\bAI\b/g, "ए आय")
-    .replace(/\b(\d+)\b/g, (m) => m.split("").map((d) => DEVANAGARI_DIGITS[d] ?? d).join(" "))
-    .replace(/[*_#`~>|]/g, " ");
+    // ranges read naturally: "2-3" -> "दोन ते तीन"
+    .replace(/(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)/g, (_m, a, b) => `${mrNumeral(a)} ते ${mrNumeral(b)}`)
+    .replace(/\d+(?:\.\d+)?/g, (m) => mrNumeral(m))
+    .replace(/[*_#`~>|]/g, " ")
+    // give the voice breathing room at clause boundaries
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s*([।.!?])\s*/g, "$1 ")
+    .replace(/\s{2,}/g, " ");
 }
 
 function shapeCommon(text: string) {
@@ -152,7 +217,7 @@ export function speak(text: string, lang: Lang, onEnd?: () => void) {
   const spoken = shapeForSpeech(text, lang);
   if (!spoken) return false;
 
-  const pieces = chunk(spoken);
+  const pieces = chunk(spoken, lang === "mr" ? 140 : 180);
   const myToken = ++token;
   let index = 0;
 
@@ -174,8 +239,10 @@ export function speak(text: string, lang: Lang, onEnd?: () => void) {
         ? voice.lang
         : SPEECH_LOCALE[lang];
     // Devanagari narration is denser; slow it down a little more for Marathi.
-    utter.rate = lang === "mr" ? 0.82 : lang === "hi" ? 0.88 : 0.95;
-    utter.pitch = lang === "mr" ? 1.02 : 1;
+    // Devanagari is denser; a slight slow-down plus clause pauses reads more
+    // fluently than the very slow rate used before.
+    utter.rate = lang === "mr" ? 0.88 : lang === "hi" ? 0.9 : 0.95;
+    utter.pitch = lang === "mr" ? 1 : 1;
     utter.volume = 1;
     utter.onend = () => next();
     utter.onerror = () => {

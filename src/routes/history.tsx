@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, QrCode } from "lucide-react";
 import { useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { AppShell } from "@/components/agri/AppShell";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -114,13 +115,13 @@ function History() {
 
               {openQr === scan.id && (
                 <div className="mt-3 flex flex-col items-center gap-2 rounded-xl border bg-card p-3">
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(qr)}`}
-                    alt={`QR diagnostic summary for ${info.name.en}`}
-                    className="size-32 rounded-lg"
-                    width={128}
-                    height={128}
-                  />
+                  <div
+                    className="rounded-lg bg-background p-2"
+                    role="img"
+                    aria-label={`QR diagnostic summary for ${info.name.en}`}
+                  >
+                    <QRCodeSVG value={qr} size={144} level="M" marginSize={1} />
+                  </div>
                   <p className="text-center text-[11px] text-muted-foreground">{t("qrHint")}</p>
                   <Button size="sm" variant="secondary" onClick={() => window.print()}>
                     Print

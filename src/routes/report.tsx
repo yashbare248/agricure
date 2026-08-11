@@ -3,7 +3,8 @@ import { CalendarDays, Leaf, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/agri/AppShell";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
-import { byKey } from "@/lib/treatments";
+import { byKey, TREATMENTS } from "@/lib/treatments";
+import { decodeDiagnosis } from "@/lib/report-link";
 
 type Search = {
   d?: string | undefined;
@@ -11,6 +12,7 @@ type Search = {
   s?: number | undefined;
   c?: number | undefined;
   t?: string | undefined;
+  p?: string | undefined;
 };
 
 export const Route = createFileRoute("/report")({
@@ -20,6 +22,7 @@ export const Route = createFileRoute("/report")({
     s: Number.isFinite(Number(search['s'])) ? Number(search['s']) : undefined,
     c: Number.isFinite(Number(search['c'])) ? Number(search['c']) : undefined,
     t: typeof search['t'] === "string" ? search['t'] : undefined,
+    p: typeof search['p'] === "string" ? search['p'] : undefined,
   }),
   head: () => ({
     meta: [
@@ -43,9 +46,12 @@ export const Route = createFileRoute("/report")({
 
 function ReportPage() {
   const { t, lang } = useI18n();
-  const { d, h, s, c, t: when } = Route.useSearch();
+  const { d, h, s, c, t: when, p } = Route.useSearch();
 
-  if (!d) {
+  const embeddedEarly = p ? decodeDiagnosis(p) : null;
+  const knownEarly = TREATMENTS.find((x) => x.key === d);
+
+  if (!d || (!knownEarly && !embeddedEarly)) {
     return (
       <AppShell>
         <div className="glass mx-auto mt-10 max-w-md rounded-2xl p-6 text-center">
@@ -61,7 +67,19 @@ function ReportPage() {
     );
   }
 
-  const info = byKey(d);
+  const embedded = embeddedEarly;
+  const base = knownEarly ?? byKey(d);
+  const info = embedded
+    ? {
+        ...base,
+        emoji: embedded.e || base.emoji,
+        crop: embedded.cr,
+        name: embedded.n,
+        chemical: embedded.ch,
+        organic: embedded.or,
+        prevention: embedded.pr,
+      }
+    : base;
   const health = h ?? info.healthScore;
   const severity = s ?? info.severity;
   const tone = health >= 80 ? "var(--success)" : health >= 50 ? "var(--warning)" : "var(--danger)";
